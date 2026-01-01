@@ -6,11 +6,52 @@ import {
   MessageSquare, Utensils, DollarSign, 
   Target, Package, Leaf, Github, Users
 } from './components/icons';
+import { InventoryItem, Order, SocialPost, ProductIdea, FeedbackItem, Goal } from './types';
 
 const App: React.FC = () => {
   const [showLive, setShowLive] = useState(false);
   const [activeTab, setActiveTab] = useState('daily');
   const [isGuest, setIsGuest] = useState(false);
+
+  // -- Shared State --
+  // Orders placed by guests, visible in Manager Revenue
+  const [orders, setOrders] = useState<Order[]>([]);
+  
+  // Inventory state
+  const [inventory, setInventory] = useState<InventoryItem[]>([
+      { id: '1', name: "燕麥奶 (Oatside)", quantity: 2, unit: "瓶", status: "Critical", lastUpdated: "2023-10-24" },
+      { id: '2', name: "耶加雪菲 咖啡豆", quantity: 0.5, unit: "kg", status: "Warning", lastUpdated: "2023-10-23" },
+      { id: '3', name: "外帶紙杯 (12oz)", quantity: 1, unit: "條", status: "Critical", lastUpdated: "2023-10-24" },
+      { id: '4', name: "光泉鮮乳", quantity: 12, unit: "瓶", status: "Normal", lastUpdated: "2023-10-24" },
+      { id: '5', name: "義式濃縮配方豆", quantity: 5, unit: "kg", status: "Normal", lastUpdated: "2023-10-20" },
+  ]);
+
+  // Social Media State
+  const [posts, setPosts] = useState<SocialPost[]>([
+      { id: '1', content: '週末限定！草莓戚風蛋糕新上市 🍰', date: '2023-10-23', likes: 145, shares: 20, platform: 'IG' },
+      { id: '2', content: '雨天來杯熱拿鐵，第二杯半價。', date: '2023-10-20', likes: 89, shares: 5, platform: 'FB' },
+  ]);
+
+  // Product Dev State
+  const [ideas, setIdeas] = useState<ProductIdea[]>([
+      { id: '1', name: '桂花釀拿鐵', stage: 'Testing', notes: '甜度需調整' },
+      { id: '2', name: '酪梨燻雞三明治', stage: 'Idea', notes: '尋找供應商中' },
+      { id: '3', name: '靜岡抹茶千層', stage: 'Launch', notes: '大受好評' },
+  ]);
+
+  // Feedback State
+  const [feedbacks, setFeedbacks] = useState<FeedbackItem[]>([
+      { id: '1', customer: '陳小姐', rating: 5, comment: '咖啡很好喝，環境很舒適！', date: '2023-10-24' },
+      { id: '2', customer: 'Jason', rating: 4, comment: '插座有點少，但Wifi很快。', date: '2023-10-23' },
+      { id: '3', customer: '林先生', rating: 5, comment: '店員服務親切，推推！', date: '2023-10-22' },
+  ]);
+
+  // KPI State
+  const [goals, setGoals] = useState<Goal[]>([
+      { id: '1', title: '年度營收目標', current: 850, target: 1200, unit: '萬' },
+      { id: '2', title: '會員成長數', current: 1200, target: 2000, unit: '人' },
+      { id: '3', title: 'Google 評論數', current: 480, target: 600, unit: '則' },
+  ]);
 
   const allTabs = [
     { id: 'daily', label: '今日重點', icon: Sun, guest: false },
@@ -143,7 +184,22 @@ const App: React.FC = () => {
 
         {/* Content Scrollable Area */}
         <div className="flex-1 overflow-y-auto pb-20 md:pb-0">
-           <Tools activeTab={activeTab} isGuest={isGuest} />
+           <Tools 
+                activeTab={activeTab} 
+                isGuest={isGuest} 
+                inventory={inventory}
+                setInventory={setInventory}
+                orders={orders}
+                setOrders={setOrders}
+                posts={posts}
+                setPosts={setPosts}
+                ideas={ideas}
+                setIdeas={setIdeas}
+                feedbacks={feedbacks}
+                setFeedbacks={setFeedbacks}
+                goals={goals}
+                setGoals={setGoals}
+           />
         </div>
 
         {/* Mobile Bottom Navigation (Fixed) */}
