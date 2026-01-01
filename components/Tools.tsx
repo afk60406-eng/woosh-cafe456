@@ -8,7 +8,8 @@ import {
 import { 
     Package, TrendingUp, AlertCircle, DollarSign, Leaf, Users, 
     Cloud, CloudRain, CloudSun, Upload, Download, Plus, Trash2, ShoppingCart, CheckCircle, Heart,
-    Coffee, Camera, Utensils, MessageSquare, Target, Facebook, Instagram, Star, Send, RefreshCw, X, Loader2
+    Coffee, Camera, Utensils, MessageSquare, Target, Facebook, Instagram, Star, Send, RefreshCw, X, Loader2,
+    Bell, Calendar, Clock
 } from './icons';
 
 interface ToolsProps {
@@ -419,13 +420,26 @@ export const Tools: React.FC<ToolsProps> = ({
   // -- MANAGER VIEW: DAILY --
   if (!isGuest && activeTab === 'daily') {
       const quote = ENCOURAGING_QUOTES[new Date().getDate() % ENCOURAGING_QUOTES.length];
+      
+      // Calculate Action Items dynamically
+      const criticalInventory = inventory.filter(i => i.status === 'Critical');
+      const warningInventory = inventory.filter(i => i.status === 'Warning');
+      const pendingOrders = orders.filter(o => o.status === 'Pending');
 
       return (
           <div className="p-6 space-y-8">
               <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                   <div>
-                    <h2 className="text-2xl font-bold text-[#78350f] mb-2">早安，店長！</h2>
-                    <p className="text-[#78350f]/70">今天是 {new Date().toLocaleDateString('zh-TW', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
+                    <h2 className="text-2xl font-bold text-[#78350f] mb-2 flex items-center gap-2">
+                        早安，店長！ 
+                        <span className="text-sm font-normal bg-[#ecfccb] text-[#3f6212] px-2 py-1 rounded-full flex items-center gap-1">
+                            <Clock size={14} /> 營業中
+                        </span>
+                    </h2>
+                    <p className="text-[#78350f]/70 flex items-center gap-2">
+                        <Calendar size={16} />
+                        {new Date().toLocaleDateString('zh-TW', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                    </p>
                   </div>
                   
                   {/* Real Weather Widget */}
@@ -457,23 +471,110 @@ export const Tools: React.FC<ToolsProps> = ({
                   </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                  {[
-                      { label: "今日累積營收", val: `$${28450 + orders.reduce((sum, o) => sum + o.total, 0)}`, icon: DollarSign, color: "bg-green-100 text-green-700" },
-                      { label: "總來客數", val: `${142 + orders.length} 人`, icon: Users, color: "bg-blue-100 text-blue-700" },
-                      { label: "平均客單", val: "$210", icon: TrendingUp, color: "bg-orange-100 text-orange-700" },
-                      { label: "待辦事項", val: "3 項", icon: AlertCircle, color: "bg-red-100 text-red-700" },
-                  ].map((stat, i) => (
-                      <div key={i} className="bg-white p-4 rounded-xl border border-[#78350f]/10 flex items-center gap-4">
-                          <div className={`p-3 rounded-lg ${stat.color}`}>
-                              <stat.icon size={20} />
+              {/* Action Items List (Today's Focus) */}
+              <div className="space-y-4">
+                  <h3 className="text-xl font-bold text-[#78350f] flex items-center gap-2">
+                      <Bell size={20} /> 今日待辦與提醒
+                  </h3>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {/* 1. Critical Inventory Alert */}
+                      {criticalInventory.length > 0 && (
+                          <div className="bg-red-50 p-5 rounded-xl border border-red-100 flex flex-col justify-between">
+                              <div className="flex items-start gap-3">
+                                  <div className="p-2 bg-red-100 rounded-lg text-red-600">
+                                      <AlertCircle size={20} />
+                                  </div>
+                                  <div>
+                                      <h4 className="font-bold text-red-800">緊急補貨提醒</h4>
+                                      <p className="text-sm text-red-600 mt-1">有 {criticalInventory.length} 項商品庫存過低，請立即處理。</p>
+                                  </div>
+                              </div>
+                              <div className="mt-4 pt-4 border-t border-red-100/50">
+                                  <ul className="text-sm text-red-700 space-y-1 mb-3">
+                                      {criticalInventory.slice(0, 3).map(item => (
+                                          <li key={item.id}>• {item.name} (剩 {item.quantity}{item.unit})</li>
+                                      ))}
+                                      {criticalInventory.length > 3 && <li>...等 {criticalInventory.length - 3} 項</li>}
+                                  </ul>
+                              </div>
                           </div>
-                          <div>
-                              <div className="text-xs text-gray-500">{stat.label}</div>
-                              <div className="text-xl font-bold text-gray-800">{stat.val}</div>
+                      )}
+
+                      {/* 2. Pending Orders Alert */}
+                      {pendingOrders.length > 0 ? (
+                          <div className="bg-yellow-50 p-5 rounded-xl border border-yellow-100 flex flex-col justify-between">
+                              <div className="flex items-start gap-3">
+                                  <div className="p-2 bg-yellow-100 rounded-lg text-yellow-600">
+                                      <ShoppingCart size={20} />
+                                  </div>
+                                  <div>
+                                      <h4 className="font-bold text-yellow-800">有待結帳訂單</h4>
+                                      <p className="text-sm text-yellow-700 mt-1">來自訪客模式的即時訂單</p>
+                                  </div>
+                              </div>
+                              <div className="mt-4 text-3xl font-bold text-yellow-800">
+                                  {pendingOrders.length} <span className="text-sm font-normal text-yellow-600">筆</span>
+                              </div>
                           </div>
+                      ) : (
+                          <div className="bg-stone-50 p-5 rounded-xl border border-stone-100 flex flex-col justify-between opacity-70">
+                               <div className="flex items-start gap-3">
+                                  <div className="p-2 bg-stone-200 rounded-lg text-stone-500">
+                                      <CheckCircle size={20} />
+                                  </div>
+                                  <div>
+                                      <h4 className="font-bold text-stone-600">目前無待處理訂單</h4>
+                                      <p className="text-sm text-stone-400 mt-1">櫃檯狀況良好</p>
+                                  </div>
+                              </div>
+                          </div>
+                      )}
+
+                      {/* 3. Routine Tasks (Static) */}
+                      <div className="bg-white p-5 rounded-xl border border-[#78350f]/10 shadow-sm flex flex-col justify-between">
+                          <div className="flex items-start gap-3">
+                              <div className="p-2 bg-[#ecfccb] rounded-lg text-[#3f6212]">
+                                  <CheckCircle size={20} />
+                              </div>
+                              <div>
+                                  <h4 className="font-bold text-[#3f6212]">每日例行檢查</h4>
+                                  <p className="text-sm text-[#3f6212]/70 mt-1">開店前/中準備事項</p>
+                              </div>
+                          </div>
+                          <ul className="mt-4 space-y-2 text-sm text-stone-600">
+                              <li className="flex items-center gap-2">
+                                  <input type="checkbox" className="accent-[#b45309]" /> 咖啡機壓力校正 (9 bar)
+                              </li>
+                              <li className="flex items-center gap-2">
+                                  <input type="checkbox" className="accent-[#b45309]" /> 檢查收銀機零錢
+                              </li>
+                              <li className="flex items-center gap-2">
+                                  <input type="checkbox" className="accent-[#b45309]" /> 確認 Google Maps 營業資訊
+                              </li>
+                          </ul>
                       </div>
-                  ))}
+
+                      {/* 4. Inventory Warning (Non-critical) */}
+                      {warningInventory.length > 0 && (
+                          <div className="bg-blue-50 p-5 rounded-xl border border-blue-100 flex flex-col justify-between">
+                              <div className="flex items-start gap-3">
+                                  <div className="p-2 bg-blue-100 rounded-lg text-blue-600">
+                                      <Package size={20} />
+                                  </div>
+                                  <div>
+                                      <h4 className="font-bold text-blue-800">庫存預警</h4>
+                                      <p className="text-sm text-blue-600 mt-1">建議提前備貨以免斷貨。</p>
+                                  </div>
+                              </div>
+                              <ul className="mt-4 text-sm text-blue-700 space-y-1">
+                                  {warningInventory.map(item => (
+                                      <li key={item.id}>• {item.name} (剩 {item.quantity}{item.unit})</li>
+                                  ))}
+                              </ul>
+                          </div>
+                      )}
+                  </div>
               </div>
           </div>
       );
