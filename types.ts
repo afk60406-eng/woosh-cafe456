@@ -56,6 +56,8 @@ export interface ProductIdea {
   name: string;
   stage: 'Idea' | 'Testing' | 'Launch';
   notes: string;
+  recipe?: string; // AI generated recipe
+  imageUrl?: string; // AI generated image base64
 }
 
 export interface FeedbackItem {
@@ -64,6 +66,8 @@ export interface FeedbackItem {
   rating: number;
   comment: string;
   date: string;
+  sentiment?: 'Positive' | 'Neutral' | 'Negative'; // AI analyzed
+  advice?: string; // AI analyzed advice for the owner
 }
 
 export interface Goal {
@@ -72,4 +76,11 @@ export interface Goal {
   current: number;
   target: number;
   unit: string;
+}
+
+export interface ESGItem {
+    id: string;
+    name: string;
+    score: number; // 0-100
+    fullMark: number;
 }
