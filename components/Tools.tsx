@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { MENU_DATA } from '../data/menu';
-import { InventoryItem, Order, OrderItem, MenuItem, SocialPost, ProductIdea, FeedbackItem, Goal } from '../types';
+import { InventoryItem, Order, OrderItem, MenuItem, SocialPost, ProductIdea, FeedbackItem, Goal, ESGItem } from '../types';
 import { 
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
     LineChart, Line, PieChart, Pie, Cell, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar 
@@ -9,8 +9,9 @@ import {
     Package, TrendingUp, AlertCircle, DollarSign, Leaf, Users, 
     Cloud, CloudRain, CloudSun, Upload, Download, Plus, Trash2, ShoppingCart, CheckCircle, Heart,
     Coffee, Camera, Utensils, MessageSquare, Target, Facebook, Instagram, Star, Send, RefreshCw, X, Loader2,
-    Bell, Calendar, Clock
+    Bell, Calendar, Clock, MapPin
 } from './icons';
+import { GoogleGenAI } from "@google/genai";
 
 interface ToolsProps {
   activeTab: string;
@@ -28,6 +29,8 @@ interface ToolsProps {
   setFeedbacks?: React.Dispatch<React.SetStateAction<FeedbackItem[]>>;
   goals?: Goal[];
   setGoals?: React.Dispatch<React.SetStateAction<Goal[]>>;
+  esgItems?: ESGItem[];
+  setEsgItems?: React.Dispatch<React.SetStateAction<ESGItem[]>>;
 }
 
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8'];
@@ -44,7 +47,8 @@ const ENCOURAGING_QUOTES = [
 
 export const Tools: React.FC<ToolsProps> = ({ 
     activeTab, isGuest, inventory, setInventory, orders, setOrders,
-    posts = [], setPosts, ideas = [], setIdeas, feedbacks = [], setFeedbacks, goals = [], setGoals
+    posts = [], setPosts, ideas = [], setIdeas, feedbacks = [], setFeedbacks, goals = [], setGoals,
+    esgItems = [], setEsgItems
 }) => {
   const [selectedCategory, setSelectedCategory] = useState<string>(MENU_DATA[0].title);
   
@@ -62,14 +66,17 @@ export const Tools: React.FC<ToolsProps> = ({
   // -- Modal States for Manual Inputs --
   const [showAddIdea, setShowAddIdea] = useState(false);
   const [newIdea, setNewIdea] = useState({ name: '', notes: '' });
+  const [isGeneratingProduct, setIsGeneratingProduct] = useState(false);
 
   const [showAddFeedback, setShowAddFeedback] = useState(false);
   const [newFeedback, setNewFeedback] = useState({ customer: '', rating: 5, comment: '' });
-  const [isSyncingReviews, setIsSyncingReviews] = useState(false);
+  const [isAnalyzingFeedback, setIsAnalyzingFeedback] = useState(false);
 
   const [showAddGoal, setShowAddGoal] = useState(false);
   const [newGoal, setNewGoal] = useState({ title: '', target: '', current: '', unit: '' });
 
+  const [showAddEsg, setShowAddEsg] = useState(false);
+  const [newEsg, setNewEsg] = useState({ name: '', score: 80 });
 
   // -- Load Weather on Mount --
   useEffect(() => {
@@ -101,13 +108,14 @@ export const Tools: React.FC<ToolsProps> = ({
             }
         };
 
+        // Default to Yilan City coordinates (Woosh Cafe Location) if permission denied or error
+        // 24.7570, 121.7530
         navigator.geolocation.getCurrentPosition(
             (pos) => {
                 fetchWeather(pos.coords.latitude, pos.coords.longitude);
             }, 
             (err) => {
                 console.warn("Geolocation denied, using Yilan default", err);
-                // Permission denied or error: Default to Yilan City coordinates (Woosh Cafe Location)
                 fetchWeather(24.7570, 121.7530);
             }
         );
@@ -156,44 +164,102 @@ export const Tools: React.FC<ToolsProps> = ({
       reader.readAsText(file);
   };
 
-  // -- Manual Input Handlers --
-  const handleAddIdea = () => {
+  // -- Manual Input & AI Handlers --
+  const handleAddIdea = async () => {
     if (!newIdea.name) return;
+    setIsGeneratingProduct(true);
+
+    let recipe = "";
+    let imageUrl = "";
+
+    try {
+        if (process.env.API_KEY) {
+            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+            
+            // 1. Generate Recipe
+            const recipePrompt = `Create a short, appealing recipe for a cafe item named "${newIdea.name}". Keep it concise: Ingredients list and 3 simple steps. Notes: ${newIdea.notes}`;
+            const recipeResp = await ai.models.generateContent({
+                model: 'gemini-3-flash-preview',
+                contents: recipePrompt
+            });
+            recipe = recipeResp.text || "無法生成食譜";
+
+            // 2. Generate Image
+            const imagePrompt = `A professional, high-quality, delicious food photography close-up shot of ${newIdea.name} in a cafe setting. ${newIdea.notes}`;
+            const imageResp = await ai.models.generateContent({
+                model: 'gemini-2.5-flash-image',
+                contents: imagePrompt,
+            });
+            
+            // Extract image
+            for (const part of imageResp.candidates?.[0]?.content?.parts || []) {
+                if (part.inlineData) {
+                    imageUrl = `data:image/png;base64,${part.inlineData.data}`;
+                    break;
+                }
+            }
+        }
+    } catch (error) {
+        console.error("AI Generation failed", error);
+        recipe = "AI 生成失敗，請稍後再試。";
+    }
+
     setIdeas?.(prev => [...prev, { 
         id: Date.now().toString(), 
         name: newIdea.name, 
         stage: 'Idea', 
-        notes: newIdea.notes 
+        notes: newIdea.notes,
+        recipe: recipe,
+        imageUrl: imageUrl
     }]);
     setNewIdea({ name: '', notes: '' });
+    setIsGeneratingProduct(false);
     setShowAddIdea(false);
   };
 
-  const handleAddFeedback = () => {
+  const handleAddFeedback = async () => {
     if (!newFeedback.customer) return;
+    setIsAnalyzingFeedback(true);
+    
+    let sentiment: 'Positive' | 'Neutral' | 'Negative' = 'Neutral';
+    let advice = "";
+
+    try {
+        if (process.env.API_KEY) {
+            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+            const prompt = `Analyze this cafe customer review: "${newFeedback.comment}". 
+            1. Classify sentiment as exactly one of: Positive, Neutral, Negative.
+            2. Provide 1 short sentence of actionable advice for the cafe owner.
+            Output format: JSON { "sentiment": "...", "advice": "..." }`;
+            
+            const resp = await ai.models.generateContent({
+                model: 'gemini-3-flash-preview',
+                contents: prompt,
+                config: { responseMimeType: 'application/json' }
+            });
+            
+            const jsonText = resp.text || "{}";
+            const result = JSON.parse(jsonText);
+            sentiment = result.sentiment || 'Neutral';
+            advice = result.advice || '無法分析';
+        }
+    } catch (e) {
+        console.error("Feedback analysis failed", e);
+        advice = "AI 分析服務目前不可用";
+    }
+
     setFeedbacks?.(prev => [{ 
         id: Date.now().toString(), 
         customer: newFeedback.customer, 
         rating: newFeedback.rating, 
         comment: newFeedback.comment, 
-        date: new Date().toLocaleDateString('zh-TW') 
+        date: new Date().toLocaleDateString('zh-TW'),
+        sentiment: sentiment,
+        advice: advice
     }, ...prev]);
     setNewFeedback({ customer: '', rating: 5, comment: '' });
+    setIsAnalyzingFeedback(false);
     setShowAddFeedback(false);
-  };
-
-  const handleSyncReviews = () => {
-    setIsSyncingReviews(true);
-    // Simulate API call
-    setTimeout(() => {
-        const realReviews: FeedbackItem[] = [
-            { id: `g-${Date.now()}-1`, customer: 'Alice Wu', rating: 5, comment: '拿鐵順口，環境很放鬆，適合工作！', date: new Date().toLocaleDateString('zh-TW') },
-            { id: `g-${Date.now()}-2`, customer: 'Mark Chen', rating: 4, comment: '甜點好吃，但假日人有點多。', date: new Date().toLocaleDateString('zh-TW') },
-            { id: `g-${Date.now()}-3`, customer: 'Sophie Lin', rating: 5, comment: '店員服務態度超好，大推！', date: new Date().toLocaleDateString('zh-TW') }
-        ];
-        setFeedbacks?.(prev => [...realReviews, ...prev]);
-        setIsSyncingReviews(false);
-    }, 1500);
   };
 
   const handleAddGoal = () => {
@@ -207,6 +273,18 @@ export const Tools: React.FC<ToolsProps> = ({
     }]);
     setNewGoal({ title: '', target: '', current: '', unit: '' });
     setShowAddGoal(false);
+  };
+
+  const handleAddEsg = () => {
+      if (!newEsg.name) return;
+      setEsgItems?.(prev => [...prev, {
+          id: Date.now().toString(),
+          name: newEsg.name,
+          score: Number(newEsg.score),
+          fullMark: 100
+      }]);
+      setNewEsg({ name: '', score: 80 });
+      setShowAddEsg(false);
   };
 
   // -- Guest Functions --
@@ -240,6 +318,18 @@ export const Tools: React.FC<ToolsProps> = ({
       setCheckoutComplete(true);
       setTimeout(() => setCheckoutComplete(false), 5000);
   };
+
+  // -- Empty State Component --
+  const EmptyState = ({ message, onClick, buttonText }: { message: string, onClick?: () => void, buttonText?: string }) => (
+      <div className="flex flex-col items-center justify-center h-64 border-2 border-dashed border-stone-200 rounded-2xl bg-stone-50/50">
+          <p className="text-stone-400 mb-4">{message}</p>
+          {onClick && (
+              <button onClick={onClick} className="flex items-center gap-2 px-4 py-2 bg-[#b45309] text-white rounded-lg hover:bg-[#92400e] text-sm transition-colors">
+                  <Plus size={16} /> {buttonText}
+              </button>
+          )}
+      </div>
+  );
 
   // -- GUEST VIEW: MENU --
   if (isGuest && activeTab === 'menu') {
@@ -421,7 +511,6 @@ export const Tools: React.FC<ToolsProps> = ({
   if (!isGuest && activeTab === 'daily') {
       const quote = ENCOURAGING_QUOTES[new Date().getDate() % ENCOURAGING_QUOTES.length];
       
-      // Calculate Action Items dynamically
       const criticalInventory = inventory.filter(i => i.status === 'Critical');
       const warningInventory = inventory.filter(i => i.status === 'Warning');
       const pendingOrders = orders.filter(o => o.status === 'Pending');
@@ -473,7 +562,7 @@ export const Tools: React.FC<ToolsProps> = ({
                   </div>
               </div>
 
-              {/* Action Items List (Today's Focus) */}
+              {/* Action Items List */}
               <div className="space-y-4">
                   <h3 className="text-xl font-bold text-[#78350f] flex items-center gap-2">
                       <Bell size={20} /> 今日待辦與提醒
@@ -533,7 +622,7 @@ export const Tools: React.FC<ToolsProps> = ({
                           </div>
                       )}
 
-                      {/* 3. Routine Tasks (Static) */}
+                      {/* 3. Routine Tasks */}
                       <div className="bg-white p-5 rounded-xl border border-[#78350f]/10 shadow-sm flex flex-col justify-between">
                           <div className="flex items-start gap-3">
                               <div className="p-2 bg-[#ecfccb] rounded-lg text-[#3f6212]">
@@ -556,26 +645,6 @@ export const Tools: React.FC<ToolsProps> = ({
                               </li>
                           </ul>
                       </div>
-
-                      {/* 4. Inventory Warning (Non-critical) */}
-                      {warningInventory.length > 0 && (
-                          <div className="bg-blue-50 p-5 rounded-xl border border-blue-100 flex flex-col justify-between">
-                              <div className="flex items-start gap-3">
-                                  <div className="p-2 bg-blue-100 rounded-lg text-blue-600">
-                                      <Package size={20} />
-                                  </div>
-                                  <div>
-                                      <h4 className="font-bold text-blue-800">庫存預警</h4>
-                                      <p className="text-sm text-blue-600 mt-1">建議提前備貨以免斷貨。</p>
-                                  </div>
-                              </div>
-                              <ul className="mt-4 text-sm text-blue-700 space-y-1">
-                                  {warningInventory.map(item => (
-                                      <li key={item.id}>• {item.name} (剩 {item.quantity}{item.unit})</li>
-                                  ))}
-                              </ul>
-                          </div>
-                      )}
                   </div>
               </div>
           </div>
@@ -698,7 +767,7 @@ export const Tools: React.FC<ToolsProps> = ({
 
   // -- MANAGER VIEW: REVENUE --
   if (!isGuest && activeTab === 'revenue') {
-      const totalRevenue = 28450 + orders.reduce((acc, curr) => acc + curr.total, 0);
+      const totalRevenue = orders.reduce((acc, curr) => acc + curr.total, 0);
       
       return (
           <div className="p-4 md:p-6 space-y-6">
@@ -715,91 +784,129 @@ export const Tools: React.FC<ToolsProps> = ({
                   </button>
                </div>
                
-               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                   <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#78350f]/10">
-                       <h3 className="text-stone-500 mb-2">即時總營收</h3>
-                       <p className="text-4xl font-bold text-[#b45309]">${totalRevenue.toLocaleString()}</p>
-                       <p className="text-sm text-green-600 mt-2 flex items-center gap-1"><TrendingUp size={14}/> 較昨日成長 12%</p>
-                   </div>
-                   <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#78350f]/10">
-                       <h3 className="text-stone-500 mb-2">訪客點單數 (待結帳)</h3>
-                       <p className="text-4xl font-bold text-stone-800">{orders.length} 筆</p>
-                       <p className="text-sm text-stone-400 mt-2">來自訪客模式的即時數據</p>
-                   </div>
-               </div>
+               {orders.length === 0 ? (
+                  <EmptyState message="尚無營收資料，等待訪客點餐或手動匯入" />
+               ) : (
+                   <>
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#78350f]/10">
+                            <h3 className="text-stone-500 mb-2">即時總營收</h3>
+                            <p className="text-4xl font-bold text-[#b45309]">${totalRevenue.toLocaleString()}</p>
+                            <p className="text-sm text-green-600 mt-2 flex items-center gap-1"><TrendingUp size={14}/> 較昨日成長 12%</p>
+                        </div>
+                        <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#78350f]/10">
+                            <h3 className="text-stone-500 mb-2">訪客點單數 (待結帳)</h3>
+                            <p className="text-4xl font-bold text-stone-800">{orders.length} 筆</p>
+                            <p className="text-sm text-stone-400 mt-2">來自訪客模式的即時數據</p>
+                        </div>
+                    </div>
 
-               <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#78350f]/10">
-                   <h3 className="font-bold text-stone-800 mb-4">最新訂單明細 (來自訪客模式)</h3>
-                   <div className="overflow-x-auto">
-                       <table className="w-full text-left">
-                           <thead className="bg-stone-50 text-stone-500">
-                               <tr>
-                                   <th className="p-3">訂單編號</th>
-                                   <th className="p-3">內容</th>
-                                   <th className="p-3">金額</th>
-                                   <th className="p-3">時間</th>
-                                   <th className="p-3">狀態</th>
-                               </tr>
-                           </thead>
-                           <tbody>
-                               {orders.length === 0 ? (
-                                   <tr>
-                                       <td colSpan={5} className="p-8 text-center text-stone-400">尚無新訂單</td>
-                                   </tr>
-                               ) : (
-                                   orders.map(order => (
-                                       <tr key={order.id} className="border-b border-stone-100">
-                                           <td className="p-3 font-mono text-sm">#{order.id}</td>
-                                           <td className="p-3 text-sm">{order.items.map(i => `${i.name}x${i.quantity}`).join(', ')}</td>
-                                           <td className="p-3 font-bold">${order.total}</td>
-                                           <td className="p-3 text-sm text-stone-500">{order.timestamp.toLocaleTimeString()}</td>
-                                           <td className="p-3"><span className="bg-yellow-100 text-yellow-700 px-2 py-1 rounded text-xs">待櫃檯付款</span></td>
-                                       </tr>
-                                   ))
-                               )}
-                           </tbody>
-                       </table>
-                   </div>
-               </div>
+                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#78350f]/10">
+                        <h3 className="font-bold text-stone-800 mb-4">最新訂單明細 (來自訪客模式)</h3>
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-left">
+                                <thead className="bg-stone-50 text-stone-500">
+                                    <tr>
+                                        <th className="p-3">訂單編號</th>
+                                        <th className="p-3">內容</th>
+                                        <th className="p-3">金額</th>
+                                        <th className="p-3">時間</th>
+                                        <th className="p-3">狀態</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {orders.map(order => (
+                                        <tr key={order.id} className="border-b border-stone-100">
+                                            <td className="p-3 font-mono text-sm">#{order.id}</td>
+                                            <td className="p-3 text-sm">{order.items.map(i => `${i.name}x${i.quantity}`).join(', ')}</td>
+                                            <td className="p-3 font-bold">${order.total}</td>
+                                            <td className="p-3 text-sm text-stone-500">{order.timestamp.toLocaleTimeString()}</td>
+                                            <td className="p-3"><span className="bg-yellow-100 text-yellow-700 px-2 py-1 rounded text-xs">待櫃檯付款</span></td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                   </>
+               )}
           </div>
       );
   }
 
   // -- MANAGER VIEW: ESG --
   if (!isGuest && activeTab === 'esg') {
-      const esgData = [
-          { name: '不鏽鋼吸管使用率', A: 80, fullMark: 100 },
-          { name: '咖啡渣回收率', A: 95, fullMark: 100 },
-          { name: '在地食材比例', A: 60, fullMark: 100 },
-          { name: '節能設備', A: 70, fullMark: 100 },
-          { name: '無紙化交易', A: 50, fullMark: 100 },
-      ];
       return (
           <div className="p-4 md:p-6 space-y-6">
-              <h2 className="text-2xl font-bold text-[#78350f] flex items-center gap-2"><Leaf /> ESG 永續指標</h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="bg-white p-6 rounded-2xl border border-[#78350f]/10 h-[300px] md:h-[400px] flex flex-col items-center justify-center">
-                      <ResponsiveContainer width="100%" height="100%">
-                          <RadarChart cx="50%" cy="50%" outerRadius="80%" data={esgData}>
-                              <PolarGrid />
-                              <PolarAngleAxis dataKey="name" tick={{ fontSize: 12 }} />
-                              <PolarRadiusAxis angle={30} domain={[0, 100]} />
-                              <Radar name="Woosh Cafe" dataKey="A" stroke="#3f6212" fill="#3f6212" fillOpacity={0.6} />
-                              <Tooltip />
-                          </RadarChart>
-                      </ResponsiveContainer>
-                  </div>
-                  <div className="space-y-4">
-                      <div className="bg-[#ecfccb] p-6 rounded-2xl">
-                          <h3 className="font-bold text-[#3f6212] mb-2">本月綠色成就</h3>
-                          <ul className="list-disc list-inside space-y-2 text-[#3f6212]/80">
-                              <li>減少了 300 個一次性紙杯</li>
-                              <li>回收了 15kg 咖啡渣製作堆肥</li>
-                              <li>採購了 20kg 在地小農檸檬</li>
-                          </ul>
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                 <h2 className="text-2xl font-bold text-[#78350f] flex items-center gap-2"><Leaf /> ESG 永續指標</h2>
+                 <button 
+                    onClick={() => setShowAddEsg(true)}
+                    className="flex items-center gap-2 px-4 py-2 bg-[#b45309] text-white rounded-lg hover:bg-[#92400e] text-sm"
+                  >
+                      <Plus size={16} /> 新增指標
+                  </button>
+              </div>
+
+              {esgItems?.length === 0 ? (
+                  <EmptyState message="尚無 ESG 指標，請點擊新增" onClick={() => setShowAddEsg(true)} buttonText="新增 ESG 項目" />
+              ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div className="bg-white p-6 rounded-2xl border border-[#78350f]/10 h-[300px] md:h-[400px] flex flex-col items-center justify-center">
+                          <ResponsiveContainer width="100%" height="100%">
+                              <RadarChart cx="50%" cy="50%" outerRadius="80%" data={esgItems}>
+                                  <PolarGrid />
+                                  <PolarAngleAxis dataKey="name" tick={{ fontSize: 12 }} />
+                                  <PolarRadiusAxis angle={30} domain={[0, 100]} />
+                                  <Radar name="Woosh Cafe" dataKey="score" stroke="#3f6212" fill="#3f6212" fillOpacity={0.6} />
+                                  <Tooltip />
+                              </RadarChart>
+                          </ResponsiveContainer>
+                      </div>
+                      <div className="space-y-4">
+                          <div className="bg-[#ecfccb] p-6 rounded-2xl">
+                              <h3 className="font-bold text-[#3f6212] mb-2">永續管理列表</h3>
+                              <ul className="list-disc list-inside space-y-2 text-[#3f6212]/80">
+                                  {esgItems?.map(item => (
+                                      <li key={item.id}>{item.name}: {item.score} / 100</li>
+                                  ))}
+                              </ul>
+                          </div>
                       </div>
                   </div>
-              </div>
+              )}
+
+              {/* Add ESG Modal */}
+              {showAddEsg && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+                      <div className="bg-white w-full max-w-md rounded-2xl p-6 shadow-2xl relative">
+                          <button onClick={() => setShowAddEsg(false)} className="absolute top-4 right-4 text-stone-400 hover:text-stone-600"><X size={20} /></button>
+                          <h3 className="text-xl font-bold mb-4 text-[#78350f]">新增 ESG 指標</h3>
+                          <div className="space-y-4">
+                              <div>
+                                  <label className="block text-sm font-medium text-stone-700 mb-1">指標名稱</label>
+                                  <input 
+                                    type="text" 
+                                    className="w-full border rounded-lg p-2 focus:outline-none focus:border-[#b45309]" 
+                                    value={newEsg.name}
+                                    placeholder="例如：減塑達成率"
+                                    onChange={(e) => setNewEsg({...newEsg, name: e.target.value})}
+                                  />
+                              </div>
+                              <div>
+                                  <label className="block text-sm font-medium text-stone-700 mb-1">分數 (0-100)</label>
+                                  <input 
+                                    type="number" 
+                                    className="w-full border rounded-lg p-2 focus:outline-none focus:border-[#b45309]" 
+                                    value={newEsg.score}
+                                    onChange={(e) => setNewEsg({...newEsg, score: Number(e.target.value)})}
+                                  />
+                              </div>
+                              <button onClick={handleAddEsg} className="w-full bg-[#b45309] text-white py-3 rounded-xl font-bold hover:bg-[#92400e]">新增</button>
+                          </div>
+                      </div>
+                  </div>
+              )}
           </div>
       );
   }
@@ -829,21 +936,25 @@ export const Tools: React.FC<ToolsProps> = ({
                   <div className="bg-white p-6 rounded-2xl border border-[#78350f]/10 space-y-4">
                       <h3 className="font-bold text-stone-700">近期貼文成效</h3>
                       <div className="space-y-3">
-                          {posts?.map(post => (
-                              <div key={post.id} className="flex gap-4 p-3 hover:bg-stone-50 rounded-lg transition-colors">
-                                  <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white ${post.platform === 'IG' ? 'bg-gradient-to-tr from-yellow-400 to-purple-600' : 'bg-blue-600'}`}>
-                                      {post.platform === 'IG' ? <Instagram size={20} /> : <Facebook size={20} />}
+                          {posts && posts.length > 0 ? (
+                              posts.map(post => (
+                                  <div key={post.id} className="flex gap-4 p-3 hover:bg-stone-50 rounded-lg transition-colors">
+                                      <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white ${post.platform === 'IG' ? 'bg-gradient-to-tr from-yellow-400 to-purple-600' : 'bg-blue-600'}`}>
+                                          {post.platform === 'IG' ? <Instagram size={20} /> : <Facebook size={20} />}
+                                      </div>
+                                      <div className="flex-1">
+                                          <div className="text-sm font-medium text-stone-800 line-clamp-1">{post.content}</div>
+                                          <div className="text-xs text-stone-400 mt-1">{post.date}</div>
+                                      </div>
+                                      <div className="text-right text-xs font-bold text-stone-600">
+                                          <div>❤️ {post.likes}</div>
+                                          <div>🔁 {post.shares}</div>
+                                      </div>
                                   </div>
-                                  <div className="flex-1">
-                                      <div className="text-sm font-medium text-stone-800 line-clamp-1">{post.content}</div>
-                                      <div className="text-xs text-stone-400 mt-1">{post.date}</div>
-                                  </div>
-                                  <div className="text-right text-xs font-bold text-stone-600">
-                                      <div>❤️ {post.likes}</div>
-                                      <div>🔁 {post.shares}</div>
-                                  </div>
-                              </div>
-                          ))}
+                              ))
+                          ) : (
+                              <p className="text-center text-stone-400 py-8">尚無貼文記錄</p>
+                          )}
                       </div>
                   </div>
               </div>
@@ -871,29 +982,37 @@ export const Tools: React.FC<ToolsProps> = ({
                   </button>
               </div>
               
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 overflow-x-auto pb-4">
-                  {['Idea', 'Testing', 'Launch'].map(stage => (
-                      <div key={stage} className="bg-stone-100/50 p-4 rounded-2xl min-w-[250px]">
-                          <h3 className="font-bold text-stone-600 mb-4 px-2">{stage === 'Idea' ? '靈感發想' : stage === 'Testing' ? '試做調整' : '準備上市'}</h3>
-                          <div className="space-y-3">
-                              {ideas?.filter(i => i.stage === stage).map(idea => (
-                                  <div key={idea.id} className="bg-white p-4 rounded-xl shadow-sm border border-stone-100">
-                                      <div className="font-bold text-stone-800">{idea.name}</div>
-                                      <p className="text-xs text-stone-500 mt-2">{idea.notes}</p>
-                                      <div className={`text-[10px] px-2 py-0.5 rounded inline-block mt-3 border ${getStageColor(idea.stage)}`}>
-                                          {idea.stage}
+              {ideas && ideas.length === 0 ? (
+                  <EmptyState message="目前沒有開發中的新品，點擊新增讓 AI 幫您生成食譜與圖片" onClick={() => setShowAddIdea(true)} buttonText="新增想法" />
+              ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6 overflow-x-auto pb-4">
+                      {['Idea', 'Testing', 'Launch'].map(stage => (
+                          <div key={stage} className="bg-stone-100/50 p-4 rounded-2xl min-w-[250px]">
+                              <h3 className="font-bold text-stone-600 mb-4 px-2">{stage === 'Idea' ? '靈感發想' : stage === 'Testing' ? '試做調整' : '準備上市'}</h3>
+                              <div className="space-y-3">
+                                  {ideas?.filter(i => i.stage === stage).map(idea => (
+                                      <div key={idea.id} className="bg-white p-4 rounded-xl shadow-sm border border-stone-100">
+                                          {idea.imageUrl && (
+                                              <img src={idea.imageUrl} alt={idea.name} className="w-full h-32 object-cover rounded-lg mb-3" />
+                                          )}
+                                          <div className="font-bold text-stone-800">{idea.name}</div>
+                                          <p className="text-xs text-stone-500 mt-2">{idea.notes}</p>
+                                          {idea.recipe && (
+                                              <details className="mt-2 text-xs text-stone-500">
+                                                  <summary className="cursor-pointer hover:text-[#b45309]">AI 食譜建議</summary>
+                                                  <div className="p-2 bg-stone-50 rounded mt-1 whitespace-pre-wrap">{idea.recipe}</div>
+                                              </details>
+                                          )}
+                                          <div className={`text-[10px] px-2 py-0.5 rounded inline-block mt-3 border ${getStageColor(idea.stage)}`}>
+                                              {idea.stage}
+                                          </div>
                                       </div>
-                                  </div>
-                              ))}
-                              {stage === 'Idea' && (
-                                  <button onClick={() => setShowAddIdea(true)} className="w-full py-2 border border-dashed border-stone-300 rounded-xl text-stone-400 hover:bg-stone-100 flex items-center justify-center gap-1">
-                                      <Plus size={16} /> 新增
-                                  </button>
-                              )}
+                                  ))}
+                              </div>
                           </div>
-                      </div>
-                  ))}
-              </div>
+                      ))}
+                  </div>
+              )}
 
               {/* Add Idea Modal */}
               {showAddIdea && (
@@ -908,6 +1027,7 @@ export const Tools: React.FC<ToolsProps> = ({
                                     type="text" 
                                     className="w-full border rounded-lg p-2 focus:outline-none focus:border-[#b45309]" 
                                     value={newIdea.name}
+                                    placeholder="例如：海鹽焦糖拿鐵"
                                     onChange={(e) => setNewIdea({...newIdea, name: e.target.value})}
                                   />
                               </div>
@@ -916,10 +1036,22 @@ export const Tools: React.FC<ToolsProps> = ({
                                   <textarea 
                                     className="w-full border rounded-lg p-2 focus:outline-none focus:border-[#b45309] h-24"
                                     value={newIdea.notes}
+                                    placeholder="例如：希望用燕麥奶製作，口感要滑順..."
                                     onChange={(e) => setNewIdea({...newIdea, notes: e.target.value})}
                                   ></textarea>
                               </div>
-                              <button onClick={handleAddIdea} className="w-full bg-[#b45309] text-white py-3 rounded-xl font-bold hover:bg-[#92400e]">建立</button>
+                              <button 
+                                onClick={handleAddIdea} 
+                                disabled={isGeneratingProduct}
+                                className="w-full bg-[#b45309] text-white py-3 rounded-xl font-bold hover:bg-[#92400e] flex items-center justify-center gap-2"
+                              >
+                                  {isGeneratingProduct ? (
+                                      <>
+                                          <Loader2 className="animate-spin" size={20} />
+                                          AI 生成食譜與圖片中...
+                                      </>
+                                  ) : "建立並生成內容"}
+                              </button>
                           </div>
                       </div>
                   </div>
@@ -930,12 +1062,16 @@ export const Tools: React.FC<ToolsProps> = ({
 
   // -- MANAGER VIEW: FEEDBACK --
   if (!isGuest && activeTab === 'feedback') {
-      const data = [
-        { name: '5 星', value: 400 },
-        { name: '4 星', value: 300 },
-        { name: '3 星', value: 100 },
-        { name: '1-2 星', value: 50 },
-      ];
+      const data = feedbacks && feedbacks.length > 0 ? [
+        { name: '5 星', value: feedbacks.filter(f => f.rating === 5).length },
+        { name: '4 星', value: feedbacks.filter(f => f.rating === 4).length },
+        { name: '3 星', value: feedbacks.filter(f => f.rating === 3).length },
+        { name: '1-2 星', value: feedbacks.filter(f => f.rating <= 2).length },
+      ] : [];
+
+      const averageRating = feedbacks && feedbacks.length > 0 
+        ? (feedbacks.reduce((acc, curr) => acc + curr.rating, 0) / feedbacks.length).toFixed(1)
+        : '0.0';
 
       return (
           <div className="p-4 md:p-6 space-y-6">
@@ -944,57 +1080,76 @@ export const Tools: React.FC<ToolsProps> = ({
                   <div className="flex flex-wrap gap-2">
                        <button 
                         onClick={() => setShowAddFeedback(true)}
-                        className="flex items-center gap-2 px-4 py-2 bg-white border border-[#b45309]/20 text-[#b45309] rounded-lg hover:bg-[#b45309]/5 text-sm"
+                        className="flex items-center gap-2 px-4 py-2 bg-[#b45309] text-white rounded-lg hover:bg-[#92400e] text-sm"
                        >
-                           <Plus size={16} /> 手動新增
+                           <Plus size={16} /> 手動新增評論 (AI 分析)
                        </button>
-                       <button 
-                        onClick={handleSyncReviews}
-                        className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
-                        disabled={isSyncingReviews}
+                       <a 
+                        href="https://www.google.com/maps/search/?api=1&query=無所時時+Woosh+Cafe+宜蘭" 
+                        target="_blank" 
+                        rel="noreferrer"
+                        className="flex items-center gap-2 px-4 py-2 bg-white border border-stone-200 text-stone-600 rounded-lg hover:bg-stone-50 text-sm"
                        >
-                           {isSyncingReviews ? <Loader2 size={16} className="animate-spin"/> : <RefreshCw size={16} />} 
-                           {isSyncingReviews ? '同步中...' : '同步 Google 評論'}
-                       </button>
+                           <MapPin size={16} /> 前往 Google Maps
+                       </a>
                   </div>
               </div>
               
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="bg-white p-6 rounded-2xl border border-[#78350f]/10 h-[250px] md:h-[300px] flex items-center justify-center">
-                      <ResponsiveContainer width="100%" height="100%">
-                          <PieChart>
-                              <Pie data={data} innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
-                                  {data.map((entry, index) => (
-                                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                                  ))}
-                              </Pie>
-                              <Tooltip />
-                          </PieChart>
-                      </ResponsiveContainer>
-                      <div className="absolute text-center">
-                          <div className="text-3xl font-bold text-[#78350f]">4.6</div>
-                          <div className="text-xs text-stone-500">平均評分</div>
+              {feedbacks && feedbacks.length === 0 ? (
+                  <EmptyState message="目前沒有評論資料，請手動新增評論讓 AI 幫您分析" onClick={() => setShowAddFeedback(true)} buttonText="新增評論" />
+              ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div className="bg-white p-6 rounded-2xl border border-[#78350f]/10 h-[250px] md:h-[300px] flex items-center justify-center">
+                          <ResponsiveContainer width="100%" height="100%">
+                              <PieChart>
+                                  <Pie data={data} innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
+                                      {data.map((entry, index) => (
+                                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                      ))}
+                                  </Pie>
+                                  <Tooltip />
+                              </PieChart>
+                          </ResponsiveContainer>
+                          <div className="absolute text-center">
+                              <div className="text-3xl font-bold text-[#78350f]">{averageRating}</div>
+                              <div className="text-xs text-stone-500">平均評分</div>
+                          </div>
                       </div>
-                  </div>
 
-                  <div className="bg-white p-6 rounded-2xl border border-[#78350f]/10">
-                      <h3 className="font-bold text-stone-700 mb-4">最新顧客留言</h3>
-                      <div className="space-y-4 max-h-[250px] overflow-y-auto pr-2">
-                          {feedbacks?.map(fb => (
-                              <div key={fb.id} className="border-b border-stone-100 pb-3 last:border-0">
-                                  <div className="flex justify-between items-start">
-                                      <span className="font-bold text-stone-800">{fb.customer}</span>
-                                      <div className="flex text-yellow-400">
-                                          {[...Array(fb.rating)].map((_, i) => <Star key={i} size={12} fill="currentColor" />)}
+                      <div className="bg-white p-6 rounded-2xl border border-[#78350f]/10">
+                          <h3 className="font-bold text-stone-700 mb-4">顧客留言與 AI 建議</h3>
+                          <div className="space-y-4 max-h-[250px] overflow-y-auto pr-2">
+                              {feedbacks?.map(fb => (
+                                  <div key={fb.id} className="border-b border-stone-100 pb-3 last:border-0">
+                                      <div className="flex justify-between items-start">
+                                          <div className="flex items-center gap-2">
+                                              <span className="font-bold text-stone-800">{fb.customer}</span>
+                                              {fb.sentiment && (
+                                                  <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+                                                      fb.sentiment === 'Positive' ? 'bg-green-100 text-green-700' :
+                                                      fb.sentiment === 'Negative' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-700'
+                                                  }`}>
+                                                      {fb.sentiment === 'Positive' ? '正面' : fb.sentiment === 'Negative' ? '負面' : '中立'}
+                                                  </span>
+                                              )}
+                                          </div>
+                                          <div className="flex text-yellow-400">
+                                              {[...Array(fb.rating)].map((_, i) => <Star key={i} size={12} fill="currentColor" />)}
+                                          </div>
                                       </div>
+                                      <p className="text-sm text-stone-600 mt-1">{fb.comment}</p>
+                                      {fb.advice && (
+                                          <div className="mt-2 bg-[#ecfccb]/50 p-2 rounded text-xs text-[#3f6212] flex items-start gap-1">
+                                              <span className="font-bold shrink-0">AI 建議:</span> {fb.advice}
+                                          </div>
+                                      )}
+                                      <div className="text-xs text-stone-400 mt-2">{fb.date}</div>
                                   </div>
-                                  <p className="text-sm text-stone-600 mt-1">{fb.comment}</p>
-                                  <div className="text-xs text-stone-400 mt-2">{fb.date}</div>
-                              </div>
-                          ))}
+                              ))}
+                          </div>
                       </div>
                   </div>
-              </div>
+              )}
 
               {/* Add Feedback Modal */}
               {showAddFeedback && (
@@ -1030,7 +1185,18 @@ export const Tools: React.FC<ToolsProps> = ({
                                     onChange={(e) => setNewFeedback({...newFeedback, comment: e.target.value})}
                                   ></textarea>
                               </div>
-                              <button onClick={handleAddFeedback} className="w-full bg-[#b45309] text-white py-3 rounded-xl font-bold hover:bg-[#92400e]">新增</button>
+                              <button 
+                                onClick={handleAddFeedback} 
+                                disabled={isAnalyzingFeedback}
+                                className="w-full bg-[#b45309] text-white py-3 rounded-xl font-bold hover:bg-[#92400e] flex items-center justify-center gap-2"
+                              >
+                                  {isAnalyzingFeedback ? (
+                                      <>
+                                          <Loader2 className="animate-spin" size={20} />
+                                          AI 分析情緒與建議中...
+                                      </>
+                                  ) : "新增並分析"}
+                              </button>
                           </div>
                       </div>
                   </div>
@@ -1053,31 +1219,35 @@ export const Tools: React.FC<ToolsProps> = ({
                   </button>
               </div>
               
-              <div className="space-y-6">
-                  {goals?.map(goal => {
-                      const percent = Math.min(100, Math.round((goal.current / goal.target) * 100));
-                      return (
-                          <div key={goal.id} className="bg-white p-6 rounded-2xl border border-[#78350f]/10 shadow-sm">
-                              <div className="flex justify-between items-end mb-4">
-                                  <div>
-                                      <h3 className="font-bold text-stone-700 text-lg">{goal.title}</h3>
-                                      <p className="text-stone-400 text-sm">Target: {goal.target} {goal.unit}</p>
+              {goals && goals.length === 0 ? (
+                  <EmptyState message="尚未設定年度目標" onClick={() => setShowAddGoal(true)} buttonText="設定目標" />
+              ) : (
+                  <div className="space-y-6">
+                      {goals?.map(goal => {
+                          const percent = Math.min(100, Math.round((goal.current / goal.target) * 100));
+                          return (
+                              <div key={goal.id} className="bg-white p-6 rounded-2xl border border-[#78350f]/10 shadow-sm">
+                                  <div className="flex justify-between items-end mb-4">
+                                      <div>
+                                          <h3 className="font-bold text-stone-700 text-lg">{goal.title}</h3>
+                                          <p className="text-stone-400 text-sm">Target: {goal.target} {goal.unit}</p>
+                                      </div>
+                                      <div className="text-right">
+                                          <div className="text-3xl font-bold text-[#b45309]">{goal.current} <span className="text-sm font-normal text-stone-500">{goal.unit}</span></div>
+                                          <div className="text-sm text-[#b45309]">{percent}%</div>
+                                      </div>
                                   </div>
-                                  <div className="text-right">
-                                      <div className="text-3xl font-bold text-[#b45309]">{goal.current} <span className="text-sm font-normal text-stone-500">{goal.unit}</span></div>
-                                      <div className="text-sm text-[#b45309]">{percent}%</div>
+                                  <div className="h-3 bg-stone-100 rounded-full overflow-hidden">
+                                      <div 
+                                          className="h-full bg-gradient-to-r from-orange-400 to-[#b45309] transition-all duration-1000 ease-out"
+                                          style={{ width: `${percent}%` }}
+                                      ></div>
                                   </div>
                               </div>
-                              <div className="h-3 bg-stone-100 rounded-full overflow-hidden">
-                                  <div 
-                                      className="h-full bg-gradient-to-r from-orange-400 to-[#b45309] transition-all duration-1000 ease-out"
-                                      style={{ width: `${percent}%` }}
-                                  ></div>
-                              </div>
-                          </div>
-                      );
-                  })}
-              </div>
+                          );
+                      })}
+                  </div>
+              )}
 
                {/* Add Goal Modal */}
                {showAddGoal && (
